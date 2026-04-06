@@ -17,45 +17,58 @@ export function ScanPage() {
   const [detected, setDetected] = useState<string[]>([]);
   const [customInput, setCustomInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleImageFile = useCallback(async (file: File) => {
-    setError(null);
-    setScanning(true);
-    setPreviewUrl(URL.createObjectURL(file));
-
-    try {
-      const base64 = await fileToBase64(file);
-      const ingredients = await detectIngredientsFromImage(base64, file.type);
-      if (ingredients.length === 0) {
-        setError("Couldn't detect ingredients. Try a clearer photo or add manually.");
-        setDetected([]);
-      } else {
-        setDetected(ingredients);
-      }
-      setStep("confirm");
-    } catch (err: any) {
-      setError(`AI scan failed: ${err.message || 'Unknown error'}`);
-      console.error(err);
-    } finally {
-      setScanning(false);
-    }
-  }, []);
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) handleImageFile(file);
+    if (file) {
+      setSelectedFile(file);
+      setPreviewUrl(URL.createObjectURL(file));
+      setError(null);
+    }
   };
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       const file = e.dataTransfer.files?.[0];
-      if (file && file.type.startsWith("image/")) handleImageFile(file);
+      if (file && file.type.startsWith("image/")) {
+        setSelectedFile(file);
+        setPreviewUrl(URL.createObjectURL(file));
+        setError(null);
+      }
     },
-    [handleImageFile]
+    []
   );
+
+  const analyzeImage = async () => {
+    if (!selectedFile) return;
+    setError(null);
+    setScanning(true);
+
+    try {
+      const base64 = await fileToBase64(selectedFile);
+      const ingredients = await detectIngredientsFromImage(base64, selectedFile.type);
+      if (ingredients.length === 0) {
+        setError("Couldn't detect ingredients. Try a clearer photo or add manually.");
+        setDetected([]);
+        setSelectedFile(null);
+        setPreviewUrl(null);
+      } else {
+        setDetected(ingredients);
+        setStep("confirm");
+      }
+    } catch (err: any) {
+      setError(`AI scan failed: ${err.message || 'Unknown error'}`);
+      console.error(err);
+      setSelectedFile(null);
+      setPreviewUrl(null);
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const addIngredient = () => {
     const val = customInput.trim();
@@ -117,7 +130,7 @@ export function ScanPage() {
               htmlFor={!scanning ? "image-scan-input" : undefined}
               onDrop={handleDrop}
               onDragOver={(e) => e.preventDefault()}
-              className={`w-full aspect-[16/9] rounded-2xl border-2 border-dashed border-emerald-300 bg-emerald-50/50 flex flex-col items-center justify-center gap-4 hover:bg-emerald-50 transition-colors mb-4 ${scanning ? "cursor-default" : "cursor-pointer"}`}
+              className={`w-full relative aspect-[16/9] rounded-2xl border-2 border-dashed border-emerald-300 bg-emerald-50/50 overflow-hidden flex flex-col items-center justify-center gap-4 hover:bg-emerald-50 transition-colors mb-4 ${scanning ? "cursor-default" : "cursor-pointer"}`}
             >
               {scanning ? (
                 <>
@@ -125,18 +138,31 @@ export function ScanPage() {
                     <img
                       src={previewUrl}
                       alt="preview"
-                      className="absolute inset-0 w-full h-full object-cover rounded-2xl opacity-30"
+                      className="absolute inset-0 w-full h-full object-cover rounded-2xl opacity-40 blur-sm"
                     />
                   )}
                   <motion.div
                     animate={{ rotate: 360 }}
                     transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                    className="z-10"
                   >
-                    <Sparkles className="w-12 h-12 text-emerald-500" />
+                    <Sparkles className="w-12 h-12 text-emerald-600 drop-shadow-md" />
                   </motion.div>
-                  <div>
-                    <p className="text-emerald-600 font-medium">AI is scanning your fridge...</p>
-                    <p className="text-sm text-muted-foreground mt-1">Detecting ingredients</p>
+                  <div className="z-10 bg-white/80 backdrop-blur-sm px-4 py-2 rounded-xl text-center shadow-sm">
+                    <p className="text-emerald-700 font-bold">AI is scanning your fridge...</p>
+                    <p className="text-sm text-emerald-600/80 mt-1">Detecting ingredients</p>
+                  </div>
+                </>
+              ) : previewUrl ? (
+                <>
+                  <img
+                    src={previewUrl}
+                    alt="preview"
+                    className="absolute inset-0 w-full h-full object-cover rounded-2xl opacity-50"
+                  />
+                  <div className="z-10 bg-white/90 backdrop-blur p-4 rounded-xl flex flex-col items-center shadow-lg">
+                    <p className="text-emerald-700 font-bold mb-1">Photo ready!</p>
+                    <p className="text-sm text-emerald-600/80">Tap here if you want to change it.</p>
                   </div>
                 </>
               ) : (
@@ -154,7 +180,19 @@ export function ScanPage() {
                   </div>
                 </>
               )}
-            </button>
+            </label>
+
+            {previewUrl && !scanning && (
+              <motion.button
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                onClick={analyzeImage}
+                className="w-full py-4 rounded-2xl bg-emerald-500 text-white font-bold shadow-md hover:bg-emerald-600 transition-colors mb-4 flex items-center justify-center gap-2"
+              >
+                <Sparkles className="w-5 h-5" />
+                Analyze Photo with AI
+              </motion.button>
+            )}
 
             {error && (
               <div className="flex items-center gap-2 text-red-600 text-sm mb-4 p-3 bg-red-50 rounded-xl">
@@ -194,7 +232,7 @@ export function ScanPage() {
                   AI detected {detected.length} ingredients
                 </div>
                 <button
-                  onClick={() => { setStep("scan"); setPreviewUrl(null); setDetected([]); }}
+                  onClick={() => { setStep("scan"); setPreviewUrl(null); setDetected([]); setSelectedFile(null); }}
                   className="absolute top-3 right-3 bg-white/90 backdrop-blur p-1.5 rounded-full"
                 >
                   <X className="w-4 h-4" />
