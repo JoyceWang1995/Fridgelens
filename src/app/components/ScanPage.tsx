@@ -1,8 +1,10 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
-import { Camera, Plus, X, Check, Sparkles, Upload } from "lucide-react";
+import { Camera, Plus, X, Check, Sparkles, Upload, AlertCircle } from "lucide-react";
 import { INGREDIENT_CATEGORIES } from "./mock-data";
+import { detectIngredientsFromImage } from "../services/ai";
+import { saveIngredients } from "../services/db";
 
 export function ScanPage() {
   const navigate = useNavigate();
@@ -14,39 +16,67 @@ export function ScanPage() {
   const [scanning, setScanning] = useState(false);
   const [detected, setDetected] = useState<string[]>([]);
   const [customInput, setCustomInput] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const simulateScan = useCallback(() => {
+  const handleImageFile = useCallback(async (file: File) => {
+    setError(null);
     setScanning(true);
-    // Simulate AI scanning
-    setTimeout(() => {
-      const all = Object.values(INGREDIENT_CATEGORIES).flat();
-      const shuffled = all.sort(() => 0.5 - Math.random());
-      setDetected(shuffled.slice(0, 8 + Math.floor(Math.random() * 5)));
-      setScanning(false);
+    setPreviewUrl(URL.createObjectURL(file));
+
+    try {
+      const base64 = await fileToBase64(file);
+      const ingredients = await detectIngredientsFromImage(base64, file.type);
+      if (ingredients.length === 0) {
+        setError("Couldn't detect ingredients. Try a clearer photo or add manually.");
+        setDetected([]);
+      } else {
+        setDetected(ingredients);
+      }
       setStep("confirm");
-    }, 2000);
+    } catch (err: any) {
+      setError(`AI scan failed: ${err.message || 'Unknown error'}`);
+      console.error(err);
+    } finally {
+      setScanning(false);
+    }
   }, []);
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleImageFile(file);
+  };
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      const file = e.dataTransfer.files?.[0];
+      if (file && file.type.startsWith("image/")) handleImageFile(file);
+    },
+    [handleImageFile]
+  );
+
   const addIngredient = () => {
-    if (customInput.trim() && !detected.includes(customInput.trim())) {
-      setDetected([...detected, customInput.trim()]);
+    const val = customInput.trim();
+    if (val && !detected.includes(val)) {
+      setDetected((prev) => [...prev, val]);
       setCustomInput("");
     }
   };
 
   const removeIngredient = (item: string) => {
-    setDetected(detected.filter((d) => d !== item));
+    setDetected((prev) => prev.filter((d) => d !== item));
   };
 
   const toggleFromCategory = (item: string) => {
-    if (detected.includes(item)) {
-      removeIngredient(item);
-    } else {
-      setDetected([...detected, item]);
-    }
+    setDetected((prev) =>
+      prev.includes(item) ? prev.filter((d) => d !== item) : [...prev, item]
+    );
   };
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
+    await saveIngredients(detected);
     const route = isWeekly ? "/weekly-plan" : "/recipes";
     navigate(`${route}?ingredients=${encodeURIComponent(detected.join(","))}`);
   };
@@ -59,7 +89,7 @@ export function ScanPage() {
         </h1>
         <p className="text-muted-foreground">
           {step === "scan"
-            ? "Upload a photo or manually add ingredients"
+            ? "Upload a photo and AI will detect your ingredients"
             : `${detected.length} ingredients detected — edit and confirm`}
         </p>
       </div>
@@ -72,41 +102,68 @@ export function ScanPage() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            {/* Scan Area */}
-            <button
-              onClick={simulateScan}
-              disabled={scanning}
-              className="w-full aspect-[16/9] rounded-2xl border-2 border-dashed border-emerald-300 bg-emerald-50/50 flex flex-col items-center justify-center gap-4 hover:bg-emerald-50 transition-colors mb-6"
+            {/* Hidden file input */}
+            <input
+              id="image-scan-input"
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleFileChange}
+            />
+
+            {/* Drop Zone */}
+            <label
+              htmlFor={!scanning ? "image-scan-input" : undefined}
+              onDrop={handleDrop}
+              onDragOver={(e) => e.preventDefault()}
+              className={`w-full aspect-[16/9] rounded-2xl border-2 border-dashed border-emerald-300 bg-emerald-50/50 flex flex-col items-center justify-center gap-4 hover:bg-emerald-50 transition-colors mb-4 ${scanning ? "cursor-default" : "cursor-pointer"}`}
             >
               {scanning ? (
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-                >
-                  <Sparkles className="w-12 h-12 text-emerald-500" />
-                </motion.div>
+                <>
+                  {previewUrl && (
+                    <img
+                      src={previewUrl}
+                      alt="preview"
+                      className="absolute inset-0 w-full h-full object-cover rounded-2xl opacity-30"
+                    />
+                  )}
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                  >
+                    <Sparkles className="w-12 h-12 text-emerald-500" />
+                  </motion.div>
+                  <div>
+                    <p className="text-emerald-600 font-medium">AI is scanning your fridge...</p>
+                    <p className="text-sm text-muted-foreground mt-1">Detecting ingredients</p>
+                  </div>
+                </>
               ) : (
-                <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center">
-                  <Camera className="w-8 h-8 text-emerald-600" />
-                </div>
-              )}
-              <div>
-                <p className={scanning ? "text-emerald-600" : ""}>
-                  {scanning ? "AI is scanning your fridge..." : "Tap to scan your fridge"}
-                </p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {scanning ? "Detecting ingredients" : "Or upload a photo"}
-                </p>
-              </div>
-              {!scanning && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Upload className="w-4 h-4" />
-                  Upload image
-                </div>
+                <>
+                  <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center">
+                    <Camera className="w-8 h-8 text-emerald-600" />
+                  </div>
+                  <div>
+                    <p>Tap to upload a fridge photo</p>
+                    <p className="text-sm text-muted-foreground mt-1">or drag and drop an image</p>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Upload className="w-4 h-4" />
+                    JPG, PNG, WEBP supported
+                  </div>
+                </>
               )}
             </button>
 
-            {/* Quick Add */}
+            {error && (
+              <div className="flex items-center gap-2 text-red-600 text-sm mb-4 p-3 bg-red-50 rounded-xl">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                {error}
+              </div>
+            )}
+
+            {/* Manual skip */}
             <div className="text-center text-sm text-muted-foreground mb-4">
               or add ingredients manually
             </div>
@@ -127,6 +184,24 @@ export function ScanPage() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
+            {/* Preview thumbnail */}
+            {previewUrl && (
+              <div className="relative mb-6 rounded-2xl overflow-hidden h-40">
+                <img src={previewUrl} alt="Scanned" className="w-full h-full object-cover" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
+                <div className="absolute bottom-3 left-3 text-white text-sm">
+                  <Sparkles className="w-4 h-4 inline mr-1" />
+                  AI detected {detected.length} ingredients
+                </div>
+                <button
+                  onClick={() => { setStep("scan"); setPreviewUrl(null); setDetected([]); }}
+                  className="absolute top-3 right-3 bg-white/90 backdrop-blur p-1.5 rounded-full"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             {/* Detected Ingredients */}
             <div className="mb-6">
               <div className="flex flex-wrap gap-2 mb-4">
@@ -144,6 +219,9 @@ export function ScanPage() {
                     </button>
                   </motion.span>
                 ))}
+                {detected.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No ingredients yet. Add some below.</p>
+                )}
               </div>
 
               {/* Custom Input */}
@@ -208,4 +286,18 @@ export function ScanPage() {
       </AnimatePresence>
     </div>
   );
+}
+
+// Convert File to base64 string (without data URL prefix)
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      // Strip "data:image/...;base64," prefix
+      resolve(result.split(",")[1]);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
