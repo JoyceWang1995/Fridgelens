@@ -5,7 +5,8 @@ const router = Router();
 const GEMINI_MODEL = "gemini-2.5-flash-lite";
 
 function getUrl() {
-  const key = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "AIzaSyA4jraDWkgmDtBR2ma75MfkHy9naEk71JI";
+  const key = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("Gemini API key is not configured on the server.");
   return `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`;
 }
 
